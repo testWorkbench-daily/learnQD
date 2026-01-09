@@ -10,9 +10,9 @@ print(df.head())
 print(df.columns)
 
 # 4. 存成 CSV
-df.to_csv('nq_m1_all.csv')
+df.to_csv('./data/nq_m1_all.csv')
 
 # 5. 处理成 Backtrader 格式
 df.index = pd.to_datetime(df.index).tz_localize(None)
 df = df[['open', 'high', 'low', 'close', 'volume']]
-df.to_csv('nq_m1_all_backtrader.csv')
+df.to_csv('./data/nq_m1_all_backtrader.csv')

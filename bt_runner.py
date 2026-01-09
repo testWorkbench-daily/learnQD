@@ -6,7 +6,7 @@ import datetime
 import os
 import pandas as pd
 from typing import Optional, Dict, Any, List
-from bt_base import StrategyAtom, TradeRecorder
+from bt_base import StrategyAtom, TradeRecorder, DailyValueRecorder
 
 
 class Runner:
@@ -20,7 +20,7 @@ class Runner:
     
     # 默认配置
     DEFAULT_CASH = 100000
-    DEFAULT_COMMISSION = 0.001
+    DEFAULT_COMMISSION = 0
     
     # K线周期映射
     TIMEFRAME_MAP = {
@@ -50,6 +50,7 @@ class Runner:
         (bt.analyzers.Returns, {}),
         (bt.analyzers.TradeAnalyzer, {}),
         (TradeRecorder, {}),
+        (DailyValueRecorder, {}),
     ]
     
     def __init__(
@@ -158,7 +159,7 @@ class Runner:
         print('\n' + '=' * 60)
         print('策略对比')
         print('=' * 60)
-        print(f"{'策略名称':<20} {'收益率':>10} {'夏普':>8} {'回撤':>8} {'胜率':>8}")
+        print(f"{'策略名称':<12} {'收益率':>10} {'夏普':>8} {'回撤':>8} {'胜率':>8}")
         print('-' * 60)
         for r in results:
             print(f"{r['name']:<20} {r['return_pct']:>9.2f}% {r['sharpe']:>8.2f} {r['max_dd']:>7.2f}% {r['win_rate']:>7.2f}%")
@@ -319,13 +320,46 @@ class Runner:
         output_dir = 'backtest_results'
         os.makedirs(output_dir, exist_ok=True)
         
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'{output_dir}/trades_{atom.name}_{self.timeframe}_{timestamp}.csv'
+        # 使用start和end日期命名
+        start_str = self.start_date.strftime('%Y%m%d')
+        end_str = self.end_date.strftime('%Y%m%d')
+        filename = f'{output_dir}/trades_{atom.name}_{self.timeframe}_{start_str}_{end_str}.csv'
         
         df = pd.DataFrame(records)
+        # 数值列保留2位小数
+        numeric_cols = ['price', 'value', 'commission', 'portfolio_value', 'cash', 'pnl']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = df[col].round(2)
         df.to_csv(filename, index=False)
         print(f'\n交易记录已保存: {filename}')
-    
+        
+        # 保存每日价值数据（用于相关性分析）
+        self._save_daily_values(strat, atom)
+
+    def _save_daily_values(self, strat, atom: StrategyAtom):
+        """保存每日价值数据（用于策略相关性分析）"""
+        try:
+            daily_recorder = strat.analyzers.dailyvaluerecorder.get_analysis()
+            daily_values = daily_recorder.get('daily_values', [])
+
+            if not daily_values:
+                return
+
+            output_dir = 'backtest_results'
+            os.makedirs(output_dir, exist_ok=True)
+
+            start_str = self.start_date.strftime('%Y%m%d')
+            end_str = self.end_date.strftime('%Y%m%d')
+            filename = f'{output_dir}/daily_values_{atom.name}_{self.timeframe}_{start_str}_{end_str}.csv'
+
+            df = pd.DataFrame(daily_values)
+            df['datetime'] = pd.to_datetime(df['datetime'])
+            df.to_csv(filename, index=False)
+            print(f'每日价值已保存: {filename}')
+        except Exception as e:
+            print(f'保存每日价值失败: {e}')
+
     def _plot(self, cerebro: bt.Cerebro):
         """生成图表"""
         try:

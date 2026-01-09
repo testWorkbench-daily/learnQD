@@ -105,6 +105,45 @@ class TradeRecorder(bt.Analyzer):
         }
 
 
+class DailyValueRecorder(bt.Analyzer):
+    """记录每日组合价值和收益率"""
+    
+    def __init__(self):
+        self.daily_values = []
+        self.prev_value = None
+        self.initial_value = None
+    
+    def start(self):
+        # 记录初始资金
+        self.initial_value = self.strategy.broker.getvalue()
+        self.prev_value = self.initial_value
+    
+    def next(self):
+        # 每个bar记录一次价值(后续会根据timeframe过滤)
+        current_value = self.strategy.broker.getvalue()
+        dt = self.strategy.datetime.datetime(0)
+        
+        daily_return = 0.0
+        if self.prev_value > 0:
+            daily_return = (current_value - self.prev_value) / self.prev_value
+        
+        self.daily_values.append({
+            'datetime': dt,
+            'portfolio_value': current_value,
+            'daily_return': daily_return,
+            'cumulative_return': (current_value - self.initial_value) / self.initial_value
+        })
+        
+        self.prev_value = current_value
+    
+    def get_analysis(self):
+        return {
+            'daily_values': self.daily_values,
+            'initial_value': self.initial_value,
+            'final_value': self.prev_value if self.prev_value else self.initial_value
+        }
+
+
 # =============================================================================
 # 基础Strategy (带交易记录功能)
 # =============================================================================
@@ -121,10 +160,12 @@ class BaseStrategy(bt.Strategy):
     
     def __init__(self):
         self.order = None
-        self.buyprice = None
-        self.buycomm = None
         self.trade_records = []
         self.trade_count = 0
+        # 持仓成本追踪
+        self.position_cost = 0.0      # 总成本
+        self.position_size = 0        # 总持仓数量
+        self.position_comm = 0.0      # 累计手续费
     
     def log(self, txt, dt=None):
         if self.p.printlog:
@@ -137,20 +178,46 @@ class BaseStrategy(bt.Strategy):
         
         if order.status == order.Completed:
             dt = self.datas[0].datetime.datetime(0)
+            exec_price = order.executed.price
+            exec_size = abs(order.executed.size)
+            exec_comm = order.executed.comm
             
             if order.isbuy():
-                self.buyprice = order.executed.price
-                self.buycomm = order.executed.comm
-                self._record_trade(dt, 'BUY', order)
+                # 买入：累加成本
+                self.position_cost += exec_price * exec_size
+                self.position_size += exec_size
+                self.position_comm += exec_comm
+                self._record_trade(dt, 'BUY', order, pnl=0.0)
             else:
-                pnl = 0
-                if self.buyprice:
-                    pnl = (order.executed.price - self.buyprice) * order.executed.size - order.executed.comm - (self.buycomm or 0)
-                self._record_trade(dt, 'SELL', order, pnl)
+                # 卖出：计算盈亏
+                pnl = 0.0
+                if self.position_size > 0:
+                    # 计算平均成本
+                    avg_cost = self.position_cost / self.position_size
+                    # 计算本次卖出的盈亏（不含手续费）
+                    pnl = (exec_price - avg_cost) * exec_size
+                    # 减去手续费（买入时的分摊 + 卖出时的）
+                    comm_per_unit = self.position_comm / self.position_size
+                    pnl -= (comm_per_unit * exec_size + exec_comm)
+                    
+                    # 更新持仓（按比例减少成本和手续费）
+                    if exec_size >= self.position_size:
+                        # 全部平仓
+                        self.position_cost = 0.0
+                        self.position_size = 0
+                        self.position_comm = 0.0
+                    else:
+                        # 部分平仓
+                        ratio = exec_size / self.position_size
+                        self.position_cost -= self.position_cost * ratio
+                        self.position_comm -= self.position_comm * ratio
+                        self.position_size -= exec_size
+                
+                self._record_trade(dt, 'SELL', order, pnl=pnl)
         
         self.order = None
     
-    def _record_trade(self, dt, trade_type, order, pnl=0):
+    def _record_trade(self, dt, trade_type, order, pnl=0.0):
         self.trade_count += 1
         self.trade_records.append({
             'trade_id': self.trade_count,

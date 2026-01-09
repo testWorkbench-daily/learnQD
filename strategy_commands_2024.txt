@@ -1,0 +1,188 @@
+================================================================
+策略回测命令列表 (2024年数据)
+================================================================
+
+时间范围: 2024-01-01 至 2024-12-31
+时间周期: d1 (日线)
+
+使用方法: 复制下面的命令到不同的terminal中并行运行
+完成后运行相关性分析: python analyze_correlation.py --start 20240101 --end 20241231 --timeframe d1
+
+注意: 所有命令都包含 --no-plot 参数，避免弹出图表窗口阻塞运行
+
+================================================================
+1. 均线类策略 (5个策略)
+================================================================
+
+# 简单双均线
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom sma_cross --no-plot
+
+# 快速双均线 (5/20)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom sma_5_20 --no-plot
+
+# 中期双均线 (10/30)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom sma_10_30 --no-plot
+
+# 三重均线标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom triple_ma --no-plot
+
+# 三重均线 (8/21/55 - 斐波那契)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom triple_ma_8_21_55 --no-plot
+
+
+================================================================
+2. 震荡指标策略 (4个策略)
+================================================================
+
+# RSI反转
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom rsi_reversal --no-plot
+
+# MACD趋势
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom macd_trend --no-plot
+
+# CCI通道标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom cci_channel --no-plot
+
+# CCI通道严格版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom cci_strict --no-plot
+
+
+================================================================
+3. 布林带策略 (4个策略)
+================================================================
+
+# 布林带突破
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom boll_breakout --no-plot
+
+# 布林带均值回归标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom boll_mr --no-plot
+
+# 布林带均值回归 (20/2)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom boll_mr_20_2 --no-plot
+
+# 布林带均值回归严格版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom boll_mr_strict --no-plot
+
+
+================================================================
+4. 通道突破策略 (5个策略)
+================================================================
+
+# Keltner通道标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom keltner_channel --no-plot
+
+# Keltner通道紧密版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom keltner_tight --no-plot
+
+# 唐奇安通道标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom donchian_channel --no-plot
+
+# 唐奇安通道 (20/10)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom donchian_20_10 --no-plot
+
+# 唐奇安通道海龟系统1
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom donchian_turtle_sys1 --no-plot
+
+
+================================================================
+5. 波动率策略 (8个策略)
+================================================================
+
+# ATR突破标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom atr_breakout --no-plot
+
+# ATR突破激进版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom atr_breakout_aggressive --no-plot
+
+# 波动率突破标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom vol_breakout --no-plot
+
+# 波动率突破 (14/2)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom vol_breakout_14_2 --no-plot
+
+# 波动率区制标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom vol_regime_standard --no-plot
+
+# 波动率扩张标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom vol_expansion_standard --no-plot
+
+# 恒定波动率 (10%)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom const_vol_10 --no-plot
+
+# 恒定波动率 (15%)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom const_vol_15 --no-plot
+
+
+================================================================
+6. 趋势强度策略 (3个策略)
+================================================================
+
+# ADX趋势标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom adx_trend --no-plot
+
+# ADX趋势 (14/25)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom adx_14_25 --no-plot
+
+# ADX趋势 (14/30 - 更严格)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom adx_14_30 --no-plot
+
+
+================================================================
+7. 日内策略 (7个策略)
+================================================================
+
+# 开盘区间突破 (30分钟)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom orb_30min --no-plot
+
+# 开盘区间突破 (60分钟)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom orb_60min --no-plot
+
+# 日内动量 (1.0%)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom intraday_mom_1_0 --no-plot
+
+# 日内动量激进版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom intraday_mom_aggressive --no-plot
+
+# 日内反转 (1.5%)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom intraday_rev_1_5 --no-plot
+
+# VWAP回归标准版
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom vwap_reversion --no-plot
+
+# VWAP回归 (1.5%)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom vwap_rev_1_5 --no-plot
+
+
+================================================================
+8. 经典策略 (4个策略)
+================================================================
+
+# 海龟交易系统1
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom turtle_sys1 --no-plot
+
+# 海龟交易系统2
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom turtle_sys2 --no-plot
+
+# N日新高新低 (20日)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom new_hl_20 --no-plot
+
+# N日新高新低 (50日)
+python bt_main.py --start 2024-01-01 --end 2024-12-31 --timeframe d1 --atom new_hl_50 --no-plot
+
+
+================================================================
+总计: 40个典型策略
+================================================================
+
+运行建议:
+1. 将上述命令分配到4-8个terminal并行运行，每个terminal运行5-10个策略
+2. 所有策略运行完成后，运行相关性分析:
+   python analyze_correlation.py --start 20240101 --end 20241231 --timeframe d1
+3. 查看生成的相关性热力图和策略组合建议
+4. 根据建议选择低相关性的策略组合
+
+输出文件:
+- backtest_results/daily_values_{策略名}_d1_20240101_20241231.csv  (每个策略)
+- backtest_results/trades_{策略名}_d1_20240101_20241231.csv  (每个策略)
+- backtest_results/correlation_matrix_d1_20240101_20241231.csv  (相关性分析)
+- backtest_results/correlation_heatmap_d1_20240101_20241231.png  (相关性热力图)
