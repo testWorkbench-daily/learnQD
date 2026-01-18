@@ -48,6 +48,91 @@ from portfolio_optimizer import optimize_programmatically
 from portfolio_backtest_signal_weighted import SignalWeightedPortfolioBacktester
 
 
+# 模块级别的并行任务包装函数（用于ProcessPoolExecutor）
+def _run_test_task_parallel(task_params: Dict) -> Dict:
+    """
+    并行测试任务包装函数（在子进程中执行）
+
+    Args:
+        task_params: 包含以下键的字典：
+            - window_id: 窗口ID
+            - portfolio_config: 组合配置字典
+            - test_start: 测试开始日期
+            - test_end: 测试结束日期
+            - data_start_date: 数据开始日期
+            - data_end_date: 数据结束日期
+            - timeframe: 时间周期
+            - results_dir: 结果目录
+
+    Returns:
+        测试结果字典或None
+    """
+    try:
+        window_id = task_params['window_id']
+        portfolio_config = task_params['portfolio_config']
+        test_start = task_params['test_start']
+        test_end = task_params['test_end']
+        data_start_date = task_params['data_start_date']
+        data_end_date = task_params['data_end_date']
+        timeframe = task_params['timeframe']
+        results_dir = task_params['results_dir']
+
+        # 解析配置
+        strategies = portfolio_config['strategies'].split(',')
+        weights = [float(w) for w in portfolio_config['weights'].split(',')]
+
+        # 日期字符串
+        data_start_str = data_start_date.strftime('%Y%m%d')
+        data_end_str = data_end_date.strftime('%Y%m%d')
+        test_start_str = test_start.strftime('%Y%m%d')
+        test_end_str = test_end.strftime('%Y%m%d')
+
+        # 创建回测器实例
+        threshold_config = {'high': 0.70, 'mid': 0.35, 'low': 0.05}
+
+        backtester = SignalWeightedPortfolioBacktester(
+            strategies=strategies,
+            weights=weights,
+            threshold_config=threshold_config,
+            timeframe=timeframe,
+            start_date=data_start_str,
+            end_date=data_end_str,
+            initial_cash=100000.0,
+            results_dir=results_dir
+        )
+
+        # 加载数据
+        backtester.load_strategy_data()
+
+        # 过滤到测试期窗口
+        backtester.market_data = backtester.market_data[
+            (backtester.market_data['datetime'] >= test_start) &
+            (backtester.market_data['datetime'] <= test_end)
+        ].reset_index(drop=True)
+
+        # 运行回测
+        result = backtester.run_backtest()
+        metrics = result['metrics']
+
+        return {
+            'window_id': window_id,
+            'portfolio_id': portfolio_config.get('portfolio_id', 'N/A'),
+            'test_start': test_start_str,
+            'test_end': test_end_str,
+            'test_return_pct': metrics['total_return_pct'],
+            'test_sharpe': metrics['sharpe_ratio'],
+            'test_max_dd_pct': metrics['max_drawdown_pct'],
+            'test_total_trades': metrics['total_trades'],
+            'method': 'signal_weighted'
+        }
+
+    except Exception as e:
+        import traceback
+        print(f"    ✗ 子进程任务执行失败: {e}")
+        traceback.print_exc()
+        return None
+
+
 class WalkForwardValidator:
     """Walk-Forward验证器"""
 
@@ -297,13 +382,18 @@ class WalkForwardValidator:
             print("    警告: 传统多账户回测暂未实现,请使用 --use-signal-weighted")
             return None
 
-    def run_validation(self, workers: int = 1):
+    def run_validation(self, workers: int = None):
         """
         运行完整的Walk-Forward验证
 
         Args:
-            workers: 并行工作进程数(1=串行)
+            workers: 并行工作进程数(None=自动, 1=串行, >1=并行)
+                     自动模式下使用 max(1, cpu_count - 1)
         """
+        # 自动检测工作进程数
+        if workers is None or workers <= 0:
+            workers = max(1, multiprocessing.cpu_count() - 1)
+
         if not self.windows:
             self.generate_windows()
 
@@ -313,6 +403,7 @@ class WalkForwardValidator:
         print(f"窗口数量: {len(self.windows)}")
         print(f"每窗口选择前 {self.top_n} 个组合")
         print(f"回测方式: {'单账户信号加权' if self.use_signal_weighted else '多账户加权平均'}")
+        print(f"并行工作进程数: {workers}")
         print("=" * 80)
 
         all_train_results = []
@@ -328,31 +419,39 @@ class WalkForwardValidator:
 
             all_train_results.append(train_portfolios)
 
-            # 步骤2: 测试期验证
+            # 步骤2: 测试期验证 (可并行化)
             print(f"\n{'='*60}")
             print(f"窗口 {idx} - 测试期验证")
             print(f"{'='*60}")
             print(f"测试范围: {test_start.strftime('%Y%m%d')} ~ {test_end.strftime('%Y%m%d')}")
+            print(f"待测试组合数: {len(train_portfolios)}, 使用 {workers} 个并行进程")
 
-            for _, portfolio_config in train_portfolios.iterrows():
-                test_result = self.run_test_validation(
-                    idx,
-                    portfolio_config.to_dict(),
-                    test_start,
-                    test_end
-                )
+            # 准备测试任务列表
+            test_tasks = [
+                (idx, portfolio_config.to_dict(), test_start, test_end)
+                for _, portfolio_config in train_portfolios.iterrows()
+            ]
 
+            # 并行执行测试
+            if workers > 1:
+                window_test_results = self._run_tests_parallel(test_tasks, workers)
+            else:
+                window_test_results = self._run_tests_serial(test_tasks)
+
+            # 合并结果
+            for test_result, portfolio_config in zip(window_test_results, train_portfolios.iterrows()):
                 if test_result:
+                    _, portfolio_dict = portfolio_config
                     # 合并训练期指标
                     test_result.update({
-                        'train_start': portfolio_config['train_start'],
-                        'train_end': portfolio_config['train_end'],
-                        'train_sharpe': portfolio_config['expected_sharpe'],
-                        'train_return': portfolio_config['expected_return'],
-                        'train_max_dd': portfolio_config['expected_max_dd'],
-                        'strategies': portfolio_config['strategies'],
-                        'weights': portfolio_config['weights'],
-                        'weight_method': portfolio_config['weight_method']
+                        'train_start': portfolio_dict['train_start'],
+                        'train_end': portfolio_dict['train_end'],
+                        'train_sharpe': portfolio_dict['expected_sharpe'],
+                        'train_return': portfolio_dict['expected_return'],
+                        'train_max_dd': portfolio_dict['expected_max_dd'],
+                        'strategies': portfolio_dict['strategies'],
+                        'weights': portfolio_dict['weights'],
+                        'weight_method': portfolio_dict['weight_method']
                     })
                     all_test_results.append(test_result)
 
@@ -362,6 +461,77 @@ class WalkForwardValidator:
 
         # 生成报告
         self.generate_reports()
+
+    def _run_tests_serial(self, test_tasks: List[Tuple]) -> List[Dict]:
+        """
+        串行执行测试任务
+
+        Args:
+            test_tasks: 测试任务列表 [(window_id, portfolio_config, test_start, test_end), ...]
+
+        Returns:
+            测试结果列表
+        """
+        results = []
+        for window_id, portfolio_config, test_start, test_end in test_tasks:
+            test_result = self.run_test_validation(window_id, portfolio_config, test_start, test_end)
+            results.append(test_result)
+        return results
+
+    def _run_tests_parallel(self, test_tasks: List[Tuple], workers: int = 4) -> List[Dict]:
+        """
+        并行执行测试任务
+
+        Args:
+            test_tasks: 测试任务列表 [(window_id, portfolio_config, test_start, test_end), ...]
+            workers: 工作进程数
+
+        Returns:
+            测试结果列表（顺序与输入相同）
+        """
+        results = [None] * len(test_tasks)
+        completed_count = 0
+        total_count = len(test_tasks)
+
+        # 准备任务参数（包含所有必要的配置）
+        task_params_list = []
+        for window_id, portfolio_config, test_start, test_end in test_tasks:
+            task_params = {
+                'window_id': window_id,
+                'portfolio_config': portfolio_config,
+                'test_start': test_start,
+                'test_end': test_end,
+                'data_start_date': self.data_start_date,
+                'data_end_date': self.data_end_date,
+                'timeframe': self.timeframe,
+                'results_dir': self.results_dir
+            }
+            task_params_list.append(task_params)
+
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            # 提交所有任务
+            future_to_index = {
+                executor.submit(_run_test_task_parallel, task_params): idx
+                for idx, task_params in enumerate(task_params_list)
+            }
+
+            # 处理完成的任务
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    test_result = future.result()
+                    results[idx] = test_result
+                    completed_count += 1
+
+                    # 显示进度
+                    if (completed_count % max(1, total_count // 10)) == 0 or completed_count == total_count:
+                        print(f"    进度: {completed_count}/{total_count} ({100*completed_count//total_count}%)")
+
+                except Exception as e:
+                    print(f"    ✗ 任务 {idx} 执行失败: {e}")
+                    results[idx] = None
+
+        return results
 
     def generate_reports(self):
         """生成Walk-Forward分析报告"""
@@ -400,11 +570,14 @@ class WalkForwardValidator:
         print(f"  ✓ 窗口汇总: {window_summary_file}")
 
         # 2. 组合稳健性排名
+        # 先去重：每个策略组合在每个窗口只保留一条记录（避免同一组合不同权重方案的重复）
+        test_results_unique = self.test_results.drop_duplicates(subset=['strategies', 'window_id'])
+
         # 对于每个组合(strategies组合),计算跨窗口的平均表现
-        portfolio_robustness = self.test_results.groupby('strategies').agg({
+        portfolio_robustness = test_results_unique.groupby('strategies').agg({
             'test_sharpe': ['mean', 'std', 'min', 'max'],
             'overfitting_index': 'mean',
-            'window_id': 'count'  # 出现频率
+            'window_id': 'count'  # 被推荐的不同窗口数
         }).reset_index()
 
         portfolio_robustness.columns = ['strategies', 'avg_test_sharpe', 'sharpe_std', 'min_sharpe', 'max_sharpe', 'overfitting_index', 'frequency']
@@ -417,7 +590,32 @@ class WalkForwardValidator:
             portfolio_robustness['sharpe_std'] * 0.5
         )
 
-        portfolio_robustness = portfolio_robustness.sort_values('robustness_score', ascending=False)
+        # 添加总窗口数列
+        total_windows = self.test_results['window_id'].nunique()
+        portfolio_robustness['total_windows'] = total_windows
+
+        # 添加推荐率列 (frequency / total_windows)
+        portfolio_robustness['recommendation_rate'] = (
+            portfolio_robustness['frequency'] / total_windows
+        )
+
+        # 添加推荐期日期范围列
+        def get_recommendation_periods(strategy_name):
+            """获取该策略被推荐的所有期的日期范围（去重）"""
+            strategy_records = self.test_results[self.test_results['strategies'] == strategy_name].sort_values('window_id')
+            # 按window_id去重，只保留每个窗口的第一条记录
+            unique_records = strategy_records.drop_duplicates(subset=['window_id'])
+            periods = []
+            for _, row in unique_records.iterrows():
+                period = f"{row['test_start']}~{row['test_end']}"
+                periods.append(period)
+            return '; '.join(periods)
+
+        portfolio_robustness['recommendation_periods'] = portfolio_robustness['strategies'].apply(get_recommendation_periods)
+
+        # 按过拟合指数升序排列（从最稳健到最容易过拟合）
+        portfolio_robustness = portfolio_robustness.sort_values('overfitting_index', ascending=True)
+        portfolio_robustness = portfolio_robustness.reset_index(drop=True)
 
         robustness_file = output_dir / f'portfolio_robustness_{self.timeframe}.csv'
         portfolio_robustness.to_csv(robustness_file, index=False)
@@ -501,7 +699,7 @@ def main():
 
     # 其他
     parser.add_argument('--results-dir', default='backtest_results', help='结果目录 (默认: backtest_results)')
-    parser.add_argument('--workers', type=int, default=1, help='并行工作进程数 (默认: 1, 串行执行)')
+    parser.add_argument('--workers', type=int, default=None, help='并行工作进程数 (默认: 自动检测CPU核数-1, 1=串行执行)')
 
     args = parser.parse_args()
 

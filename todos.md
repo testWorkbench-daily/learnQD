@@ -9,3 +9,5 @@
 7. ![仓位控制开发思路](image.png)
 8. 跑代码的步骤：PORTFOLIO_WORKFLOW_GUIDE.md
 9. ![其他核心关注问题](image-1.png)
+
+python walk_forward_validator.py --data-start 20200101 --data-end 20241231--timeframe d1 --train-months 24 --test-months 12 --step-months 12 --top-n 20
