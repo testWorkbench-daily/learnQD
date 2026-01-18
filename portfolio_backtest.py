@@ -14,6 +14,7 @@
 """
 import argparse
 import datetime
+import time
 import pandas as pd
 import backtrader as bt
 import numpy as np
@@ -237,6 +238,8 @@ def backtest_portfolio_from_daily_values(
     Returns:
         包含组合绩效的字典
     """
+    load_start = time.perf_counter()
+
     # 加载各策略的daily_values
     daily_values_list = []
     for strategy in strategies:
@@ -249,8 +252,12 @@ def backtest_portfolio_from_daily_values(
         except FileNotFoundError:
             raise FileNotFoundError(f"未找到策略 {strategy} 的数据文件: {filename}\n请先运行该策略的回测")
 
+    load_time = time.perf_counter() - load_start
+
     # 确保所有策略的日期对齐
     # 使用第一个策略的日期作为基准
+    calc_start = time.perf_counter()
+
     base_dates = daily_values_list[0]['datetime'].values
 
     # 提取每个策略的cumulative_return
@@ -298,6 +305,14 @@ def backtest_portfolio_from_daily_values(
             total_trades += len(trades_df)
         except:
             pass
+
+    calc_time = time.perf_counter() - calc_start
+
+    # 打印性能日志（仅在耗时较长时）
+    total_time = load_time + calc_time
+    if total_time > 0.5:
+        print(f'      ├─ 数据加载: {load_time:.3f}秒')
+        print(f'      └─ 指标计算: {calc_time:.3f}秒')
 
     result = {
         'name': f"portfolio_{len(strategies)}strats",

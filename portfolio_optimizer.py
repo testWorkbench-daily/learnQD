@@ -33,25 +33,37 @@ class PortfolioOptimizer:
         start_date: str,
         end_date: str,
         timeframe: str,
-        results_dir: str = 'backtest_results'
+        results_dir: str = 'backtest_results',
+        data_start_date: str = None,
+        data_end_date: str = None
     ):
         """
         初始化
 
         Args:
-            start_date: 开始日期 (YYYYMMDD)
-            end_date: 结束日期 (YYYYMMDD)
+            start_date: 开始日期 (YYYYMMDD) - 窗口开始日期
+            end_date: 结束日期 (YYYYMMDD) - 窗口结束日期
             timeframe: 时间周期 (如 d1, h1)
             results_dir: 回测结果目录
+            data_start_date: 数据文件开始日期 (YYYYMMDD) - 用于匹配文件名
+            data_end_date: 数据文件结束日期 (YYYYMMDD) - 用于匹配文件名
         """
         self.start_date = start_date
         self.end_date = end_date
         self.timeframe = timeframe
         self.results_dir = results_dir
+        self.data_start_date = data_start_date
+        self.data_end_date = data_end_date
 
         # 初始化子模块
-        self.quality_filter = QualityFilter(results_dir, timeframe, start_date, end_date)
-        self.corr_analyzer = StrategyCorrelationAnalyzer(start_date, end_date, timeframe, results_dir)
+        self.quality_filter = QualityFilter(
+            results_dir, timeframe, start_date, end_date,
+            data_start_date=data_start_date, data_end_date=data_end_date
+        )
+        self.corr_analyzer = StrategyCorrelationAnalyzer(
+            start_date, end_date, timeframe, results_dir,
+            data_start_date=data_start_date, data_end_date=data_end_date
+        )
 
     def optimize(
         self,
@@ -424,6 +436,79 @@ def main():
         print()
     else:
         print("\n优化失败，请检查参数设置")
+
+
+def optimize_programmatically(
+    start_date: str,
+    end_date: str,
+    timeframe: str = 'd1',
+    min_sharpe: float = 0.5,
+    min_return: float = 1.0,
+    max_drawdown: float = -10.0,
+    top_n_quality: int = 20,
+    correlation_threshold: float = 0.3,
+    min_strategies: int = 2,
+    max_strategies: int = 4,
+    weight_methods: List[str] = None,
+    max_portfolios: int = 50,
+    results_dir: str = 'backtest_results',
+    quiet: bool = True,
+    data_start_date: str = None,
+    data_end_date: str = None
+) -> pd.DataFrame:
+    """
+    编程式调用优化器（供rolling_portfolio_validator使用）
+
+    Args:
+        start_date: 开始日期 (YYYYMMDD) - 窗口开始日期
+        end_date: 结束日期 (YYYYMMDD) - 窗口结束日期
+        timeframe: 时间周期
+        min_sharpe: 最小夏普比率
+        min_return: 最小收益率%
+        max_drawdown: 最大回撤%
+        top_n_quality: 选择质量评分前N个
+        correlation_threshold: 相关性阈值
+        min_strategies: 组合最少策略数
+        max_strategies: 组合最多策略数
+        weight_methods: 权重方法列表
+        max_portfolios: 最多生成组合数
+        results_dir: 结果目录
+        quiet: 是否禁用输出
+        data_start_date: 数据文件开始日期 (YYYYMMDD) - 用于匹配文件名，如不提供则使用start_date
+        data_end_date: 数据文件结束日期 (YYYYMMDD) - 用于匹配文件名，如不提供则使用end_date
+
+    Returns:
+        推荐组合的DataFrame
+    """
+    optimizer = PortfolioOptimizer(
+        start_date, end_date, timeframe, results_dir,
+        data_start_date=data_start_date, data_end_date=data_end_date
+    )
+
+    # 临时禁用print（如果quiet=True）
+    if quiet:
+        import sys
+        import io
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+
+    try:
+        portfolios_df = optimizer.optimize(
+            min_sharpe=min_sharpe,
+            min_return=min_return,
+            max_drawdown=max_drawdown,
+            top_n_quality=top_n_quality,
+            correlation_threshold=correlation_threshold,
+            min_strategies_per_portfolio=min_strategies,
+            max_strategies_per_portfolio=max_strategies,
+            weight_methods=weight_methods or ['sharpe_weighted', 'risk_parity', 'max_sharpe'],
+            max_portfolios=max_portfolios
+        )
+    finally:
+        if quiet:
+            sys.stdout = old_stdout
+
+    return portfolios_df
 
 
 if __name__ == '__main__':

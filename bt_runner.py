@@ -5,6 +5,7 @@ import backtrader as bt
 import datetime
 import os
 import pandas as pd
+import time
 from typing import Optional, Dict, Any, List
 from bt_base import StrategyAtom, TradeRecorder, DailyValueRecorder
 
@@ -76,28 +77,34 @@ class Runner:
     def run(self, atom: StrategyAtom, save_trades: bool = True, plot: bool = True) -> Dict[str, Any]:
         """
         运行回测
-        
+
         Args:
             atom: 策略原子实例
             save_trades: 是否保存交易记录
             plot: 是否生成图表
-        
+
         Returns:
             包含回测结果的字典
         """
+        # 总计时开始
+        total_start = time.perf_counter()
+
         cerebro = bt.Cerebro()
-        
+
         # 加载数据
+        load_start = time.perf_counter()
         self._load_data(cerebro)
-        
+        load_time = time.perf_counter() - load_start
+
         # 配置broker
+        setup_start = time.perf_counter()
         cerebro.broker.setcash(self.cash)
         cerebro.broker.setcommission(commission=self.commission)
-        
+
         # 添加基础分析器
         for analyzer_cls, kwargs in self.BASE_ANALYZERS:
             cerebro.addanalyzer(analyzer_cls, **kwargs)
-        
+
         # 根据timeframe动态添加SharpeRatio分析器
         sharpe_tf, sharpe_comp = self.SHARPE_TIMEFRAME_MAP[self.timeframe]
         cerebro.addanalyzer(
@@ -108,42 +115,68 @@ class Runner:
             compression=sharpe_comp,
             _name='sharperatio'
         )
-        
+
         # 从Atom获取策略（不传递params，由Atom内部处理）
         strategy_cls = atom.strategy_cls()
         cerebro.addstrategy(strategy_cls)
-        
+
         # 从Atom获取Sizer
         sizer_cls = atom.sizer_cls()
         if sizer_cls:
             cerebro.addsizer(sizer_cls)
         else:
             cerebro.addsizer(bt.sizers.FixedSize, stake=1)
-        
+        setup_time = time.perf_counter() - setup_start
+
         # 运行
         sharpe_tf, sharpe_comp = self.SHARPE_TIMEFRAME_MAP[self.timeframe]
         sharpe_period_desc = self._get_sharpe_period_description(sharpe_tf, sharpe_comp)
-        
+
         print(f'\n运行策略: {atom.name}')
         print(f'时间周期: {self.timeframe}')
         print(f'夏普统计周期: {sharpe_period_desc}')
         print(f'初始资金: ${self.cash:,.0f}')
         print('-' * 40)
-        
+
+        # 回测执行（最关键）
+        backtest_start = time.perf_counter()
         results = cerebro.run()
+        backtest_time = time.perf_counter() - backtest_start
         strat = results[0]
-        
+
         # 收集结果
+        collect_start = time.perf_counter()
         result = self._collect_results(cerebro, strat, atom)
-        
+        collect_time = time.perf_counter() - collect_start
+
         # 保存交易记录
+        save_start = time.perf_counter()
         if save_trades:
             self._save_trades(strat, atom)
-        
+        save_time = time.perf_counter() - save_start
+
         # 生成图表
+        plot_start = time.perf_counter()
         if plot:
             self._plot(cerebro)
-        
+        plot_time = time.perf_counter() - plot_start
+
+        # 总计时
+        total_time = time.perf_counter() - total_start
+
+        # 打印性能统计
+        print(f'\n⏱️  性能统计:')
+        print(f'  数据加载: {load_time:.2f}秒')
+        print(f'  策略设置: {setup_time:.2f}秒')
+        print(f'  回测执行: {backtest_time:.2f}秒 ⭐')
+        print(f'  结果收集: {collect_time:.2f}秒')
+        if save_trades:
+            print(f'  保存数据: {save_time:.2f}秒')
+        if plot:
+            print(f'  生成图表: {plot_time:.2f}秒')
+        print(f'  总耗时: {total_time:.2f}秒')
+        print(f'  回测占比: {backtest_time/total_time*100:.1f}%')
+
         return result
     
     def run_multiple(self, atoms: List[StrategyAtom], save_trades: bool = False, plot: bool = False) -> List[Dict[str, Any]]:
@@ -169,8 +202,9 @@ class Runner:
     def _load_data(self, cerebro: bt.Cerebro):
         """加载数据"""
         tf, compression = self.TIMEFRAME_MAP[self.timeframe]
-        
+
         # 原始分钟数据
+        read_start = time.perf_counter()
         data = bt.feeds.GenericCSVData(
             dataname=self.data_path,
             fromdate=self.start_date,
@@ -186,13 +220,47 @@ class Runner:
             timeframe=bt.TimeFrame.Minutes,
             compression=1
         )
-        
+        read_time = time.perf_counter() - read_start
+
         # 重采样
+        resample_start = time.perf_counter()
         if self.timeframe == 'm1':
             cerebro.adddata(data)
         else:
             cerebro.resampledata(data, timeframe=tf, compression=compression)
-    
+        resample_time = time.perf_counter() - resample_start
+
+        # 打印数据加载详细信息
+        if resample_time > 0.1:  # 只在重采样时打印
+            print(f'    ├─ 数据读取: {read_time:.2f}秒')
+            print(f'    └─ 数据重采样: {resample_time:.2f}秒')
+
+    def _calculate_volatility(self, strat) -> float:
+        """计算年化波动率"""
+        try:
+            import numpy as np
+            daily_recorder = strat.analyzers.dailyvaluerecorder.get_analysis()
+            daily_values = daily_recorder.get('daily_values', [])
+
+            if len(daily_values) < 2:
+                return 0.0
+
+            # 提取日收益率
+            returns = [dv['daily_return'] for dv in daily_values]
+            returns = [r for r in returns if r != 0]  # 过滤掉首日的0收益
+
+            if len(returns) < 2:
+                return 0.0
+
+            # 计算标准差并年化
+            std_dev = np.std(returns, ddof=1)
+            annualized_vol = std_dev * np.sqrt(252) * 100  # 转换为百分比
+
+            return annualized_vol
+        except Exception as e:
+            print(f'  [波动率计算失败: {e}]')
+            return 0.0
+
     def _get_sharpe_period_description(self, timeframe, compression) -> str:
         """生成Sharpe统计周期的人类可读描述"""
         if timeframe == bt.TimeFrame.Minutes:
@@ -279,62 +347,81 @@ class Runner:
         # 回撤
         dd = strat.analyzers.drawdown.get_analysis()
         max_dd = dd['max']['drawdown']
-        
+
         # 交易统计
         recorder = strat.analyzers.traderecorder.get_analysis()
-        
+
+        # 计算年化波动率
+        volatility = self._calculate_volatility(strat)
+
+        # 计算年化收益率和交易天数
+        daily_recorder = strat.analyzers.dailyvaluerecorder.get_analysis()
+        daily_values = daily_recorder.get('daily_values', [])
+        trading_days = len(daily_values) if daily_values else 1
+        annualized_return = return_pct * (252 / trading_days) if trading_days > 0 else 0.0
+
+        # 计算卡尔玛比率 (年化收益/最大回撤)
+        calmar = annualized_return / max_dd if max_dd > 0 else 0.0
+
         result = {
             'name': atom.name,
             'final_value': final_value,
             'return_pct': return_pct,
+            'annualized_return': annualized_return,
             'sharpe': sharpe_ratio,
             'max_dd': max_dd,
+            'volatility': volatility,
+            'calmar': calmar,
             'total_trades': recorder['total'],
             'win_rate': recorder.get('win_rate', 0),
             'total_pnl': recorder.get('total_pnl', 0),
+            'trading_days': trading_days,
         }
         
         # 打印结果
         sharpe_tf, sharpe_comp = self.SHARPE_TIMEFRAME_MAP[self.timeframe]
         sharpe_desc = self._get_sharpe_period_description(sharpe_tf, sharpe_comp)
-        
+
         print(f'\n回测结果:')
         print(f'  最终资金: ${final_value:,.2f}')
         print(f'  收益率: {return_pct:.2f}%')
+        print(f'  年化收益: {annualized_return:.2f}%')
+        print(f'  年化波动率: {volatility:.2f}%')
         if used_native_sharpe:
             print(f'  夏普比率: {sharpe_ratio:.2f} ✓原生计算({sharpe_desc})')
         else:
             print(f'  夏普比率: {sharpe_ratio:.2f}')
+        print(f'  卡尔玛比率: {calmar:.2f}')
         print(f'  最大回撤: {max_dd:.2f}%')
         print(f'  交易次数: {recorder["total"]}')
         print(f'  胜率: {recorder.get("win_rate", 0):.2f}%')
-        
+
         return result
     
     def _save_trades(self, strat, atom: StrategyAtom):
         """保存交易记录"""
         records = strat.get_trade_records() if hasattr(strat, 'get_trade_records') else []
-        if not records:
-            return
-        
-        output_dir = 'backtest_results'
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # 使用start和end日期命名
-        start_str = self.start_date.strftime('%Y%m%d')
-        end_str = self.end_date.strftime('%Y%m%d')
-        filename = f'{output_dir}/trades_{atom.name}_{self.timeframe}_{start_str}_{end_str}.csv'
-        
-        df = pd.DataFrame(records)
-        # 数值列保留2位小数
-        numeric_cols = ['price', 'value', 'commission', 'portfolio_value', 'cash', 'pnl']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = df[col].round(2)
-        df.to_csv(filename, index=False)
-        print(f'\n交易记录已保存: {filename}')
-        
-        # 保存每日价值数据（用于相关性分析）
+
+        # 保存交易记录（如果有）
+        if records:
+            output_dir = 'backtest_results'
+            os.makedirs(output_dir, exist_ok=True)
+
+            # 使用start和end日期命名
+            start_str = self.start_date.strftime('%Y%m%d')
+            end_str = self.end_date.strftime('%Y%m%d')
+            filename = f'{output_dir}/trades_{atom.name}_{self.timeframe}_{start_str}_{end_str}.csv'
+
+            df = pd.DataFrame(records)
+            # 数值列保留2位小数
+            numeric_cols = ['price', 'value', 'commission', 'portfolio_value', 'cash', 'pnl']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = df[col].round(2)
+            df.to_csv(filename, index=False)
+            print(f'\n交易记录已保存: {filename}')
+
+        # 保存每日价值数据（用于相关性分析）- 无论是否有交易都保存
         self._save_daily_values(strat, atom)
 
     def _save_daily_values(self, strat, atom: StrategyAtom):

@@ -5,21 +5,23 @@ NQ期货回测系统 - 主入口
 用法:
     # 单策略回测
     python bt_main.py
-    
+
     # 指定策略
     python bt_main.py --atom sma_cross
 
     # 多策略对比
     python bt_main.py --compare
-    
+
     # 指定时间范围
     python bt_main.py --start 2024-01-01 --end 2024-12-31 --compare
 """
 import argparse
 import datetime
+import time
 from bt_runner import Runner
-from atoms import SMACrossAtom, RSIReversalAtom, MACDTrendAtom, BollingerBreakoutAtom
+from atoms import SMACrossAtom, RSIReversalAtom, MACDTrendAtom, BollingerBreakoutAtom, BuyAndHoldAtom
 from atoms.sma_cross import SMACross_5_20, SMACross_10_30, SMACross_20_60
+from atoms.portfolio_rank3_combo import PortfolioRank3ComboAtom
 from atoms.triple_ma import (
     TripleMAAtom,
     TripleMA_5_20_50,
@@ -332,10 +334,17 @@ ATOMS = {
     'turtle_sys2': Turtle_System2_Standard,
     'turtle_es': Turtle_ES_Futures,
     'turtle_mnq': Turtle_MNQ_Micro,
+    # 组合策略
+    'portfolio_rank3_combo': PortfolioRank3ComboAtom,
+    # 基准策略
+    'buy_and_hold': BuyAndHoldAtom,
 }
 
 
 def main():
+    # 总计时开始
+    main_start = time.perf_counter()
+
     parser = argparse.ArgumentParser(description='NQ期货回测系统')
     parser.add_argument('--start', default='1900-01-01', help='开始日期')
     parser.add_argument('--end', default=datetime.datetime.now().strftime('%Y-%m-%d'), help='结束日期')
@@ -347,36 +356,60 @@ def main():
     parser.add_argument('--no-plot', dest='plot', action='store_false', help='不生成图表')
     parser.add_argument('--list', action='store_true', help='列出可用策略')
     parser.set_defaults(save=True, plot=True)
-    
+
     args = parser.parse_args()
-    
+
     # 列出策略
     if args.list:
         print('可用策略:')
         for name, cls in ATOMS.items():
             print(f'  {name:<15} - {cls().name}')
         return
-    
+
     # 解析日期
     start = datetime.datetime.strptime(args.start, '%Y-%m-%d')
     end = datetime.datetime.strptime(args.end, '%Y-%m-%d')
-    
+
     # 创建Runner
+    runner_start = time.perf_counter()
     runner = Runner(
         data_path=args.data,
         timeframe=args.timeframe,
         start_date=start,
         end_date=end,
     )
-    
+    runner_time = time.perf_counter() - runner_start
+
+    print(f'⏱️  Runner创建: {runner_time:.3f}秒')
+    print('')
+
     if args.compare:
         # 多策略对比
+        print(f'🔄 对比模式: 运行{len(ATOMS)}个策略...')
+        compare_start = time.perf_counter()
         atoms = [cls() for cls in ATOMS.values()]
         runner.run_multiple(atoms, save_trades=False, plot=False)
+        compare_time = time.perf_counter() - compare_start
+
+        # 打印对比模式统计
+        print('')
+        print('=' * 60)
+        print(f'⏱️  对比模式性能统计:')
+        print(f'  策略总数: {len(ATOMS)}')
+        print(f'  总耗时: {compare_time:.1f}秒 ({compare_time/60:.1f}分钟)')
+        print(f'  平均每策略: {compare_time/len(ATOMS):.2f}秒')
+        print('=' * 60)
     else:
         # 单策略回测
         atom_cls = ATOMS[args.atom]
         result = runner.run(atom_cls(), save_trades=args.save, plot=args.plot)
+
+    # 总计时
+    main_time = time.perf_counter() - main_start
+    print('')
+    print('=' * 60)
+    print(f'⏱️  程序总耗时: {main_time:.2f}秒')
+    print('=' * 60)
 
 
 if __name__ == '__main__':

@@ -191,6 +191,9 @@ from atoms.turtle_trading import (
     Turtle_MNQ_Micro,
 )
 
+# ========== 基准策略 ==========
+from atoms.buy_and_hold import BuyAndHoldAtom
+
 __all__ = [
     # ========== 趋势跟踪策略 ==========
     'SMACrossAtom',
@@ -355,4 +358,7 @@ __all__ = [
     'Turtle_System2_Standard',
     'Turtle_ES_Futures',
     'Turtle_MNQ_Micro',
+
+    # ========== 基准策略 ==========
+    'BuyAndHoldAtom',
 ]

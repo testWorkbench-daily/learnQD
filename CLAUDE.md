@@ -83,6 +83,9 @@ python bt_main.py --atom rsi_reversal --no-save --no-plot
 # Run all typical strategies for 2024
 bash run_all_strategies_2024.sh
 
+# Run all strategies on full historical period (2020-2024)
+bash run_all_strategies_2020_2024.sh
+
 # Analyze strategy correlation and save recommended portfolios
 python analyze_correlation.py --start 20240101 --end 20241231 --timeframe d1 --threshold 0.3 --max-strategies 4
 
@@ -91,7 +94,34 @@ python portfolio_backtest.py --portfolio-file backtest_results/recommended_portf
 
 # Backtest specific portfolio by ID
 python portfolio_backtest.py --portfolio-file backtest_results/recommended_portfolios_d1_20240101_20241231.csv --portfolio-id 1
+
+# Rolling window validation - identify robust portfolios across time periods
+python rolling_portfolio_validator.py --timeframe d1 --window-months 12 --step-months 12 --workers auto
+
+# Portfolio atom validation - compare actual execution vs theoretical testing
+python rolling_atom_validator.py --atom portfolio_rank3_combo --timeframe d1 --window-months 12 --step-months 12
 ```
+
+### Benchmark Testing
+
+```bash
+# Run buy-and-hold benchmark
+python bt_main.py --atom buy_and_hold --start 2024-01-01 --end 2024-12-31 --timeframe d1
+
+# Compare single strategy to benchmark
+python compare_to_benchmark.py --strategy sma_cross --timeframe d1 --start 20240101 --end 20241231
+
+# Compare multiple strategies to benchmark
+python compare_to_benchmark.py --strategies sma_cross rsi_reversal macd_trend --timeframe d1 --start 20240101 --end 20241231
+
+# Compare all backtested strategies to benchmark
+python compare_to_benchmark.py --all --timeframe d1 --start 20240101 --end 20241231
+
+# Export comparison to CSV
+python compare_to_benchmark.py --all --timeframe d1 --start 20240101 --end 20241231 --output benchmark_comparison.csv
+```
+
+**Important:** The benchmark must be run first before comparison. The comparison tool reads daily values CSV files from both the benchmark and strategies.
 
 ### Data Processing
 
@@ -207,7 +237,7 @@ def sizer_cls(self):
 
 ## Strategy Categories
 
-The system includes 6 categories of strategies (132 total):
+The system includes 7 categories of strategies (133 total):
 
 1. **Trend Following** (17 strategies): SMA cross, MACD, ADX, Triple MA
 2. **Breakout** (47 strategies): Donchian, Keltner, ATR, Volatility, New High/Low, ORB, Turtle
@@ -215,6 +245,7 @@ The system includes 6 categories of strategies (132 total):
 4. **Volatility** (15 strategies): Constant Vol, Vol Expansion, Vol Regime
 5. **Intraday** (13 strategies): Intraday Momentum, Intraday Reversal
 6. **Classic Systems** (6 strategies): Turtle System 1/2
+7. **Benchmark** (1 strategy): Buy and Hold
 
 See `bt_main.py::ATOMS` dictionary for complete list.
 
@@ -282,6 +313,261 @@ python portfolio_backtest.py --portfolio-file backtest_results/recommended_portf
 - Console output matches `bt_runner.py` format
 - Generates `daily_values_portfolio_*_{timeframe}_{start}_{end}.csv`
 - Comparison table if multiple portfolios tested
+
+## Rolling Portfolio Validation
+
+The system includes a rolling window validation tool to identify portfolios that are robust across different time periods.
+
+### Purpose
+
+Instead of testing a portfolio on a single time period, rolling validation:
+1. Runs the optimizer on multiple time windows (e.g., each year: 2020, 2021, 2022, 2023, 2024)
+2. Tracks which portfolio combinations are recommended across multiple windows
+3. Identifies portfolios that "penetrate through" different market conditions with consistent high Sharpe ratios
+
+**Use case:** Before leveraging a high-Sharpe portfolio, verify it maintains performance across different time periods, not just lucky in one specific period.
+
+### Prerequisites
+
+All strategies must be backtested on the full historical period first:
+
+```bash
+# One-time setup: Run all strategies on 2020-2024 (takes 1-2 hours)
+bash run_all_strategies_2020_2024.sh
+```
+
+This generates `daily_values_{strategy}_d1_20200101_20241231.csv` files for all strategies.
+
+### Running Rolling Validation
+
+**Recommended configuration (annual windows):**
+```bash
+python rolling_portfolio_validator.py \
+  --timeframe d1 \
+  --window-months 12 \
+  --step-months 12 \
+  --top-n 10 \
+  --workers auto
+```
+
+**Fine-grained configuration (quarterly rolling):**
+```bash
+python rolling_portfolio_validator.py \
+  --timeframe d1 \
+  --window-months 12 \
+  --step-months 3 \
+  --top-n 10 \
+  --workers 8
+```
+
+### How It Works
+
+1. **Generate Windows**: Creates time windows based on `--window-months` and `--step-months`
+   - Example: 12-month windows with 12-month steps → 5 windows (2020, 2021, 2022, 2023, 2024)
+
+2. **Per-Window Optimization**: For each window:
+   - Calls `portfolio_optimizer.optimize_programmatically()` with that window's date range
+   - Gets Top N recommended portfolios with their Sharpe ratios
+
+3. **Robustness Analysis**: Across all windows:
+   - **Recommendation Frequency**: How often a portfolio appears across windows
+   - **Average Sharpe**: Mean Sharpe across all windows where it appeared
+   - **Sharpe Std Dev**: Stability of Sharpe across windows (lower is better)
+   - **Worst Sharpe**: Minimum Sharpe across windows (risk indicator)
+   - **Penetration Rate**: % of windows where Sharpe > threshold (default 0.5)
+   - **Robustness Score**: Weighted combination of above metrics
+
+4. **Output**: Generates 3 CSV files:
+   - `rolling_window_summary.csv` - Per-window statistics
+   - `robust_portfolios_ranking.csv` - **Core output**: Portfolios ranked by robustness score
+   - `window_details.csv` - All portfolios from all windows with detailed metrics
+
+### Robustness Score Formula
+
+```
+Score = 0.3 × avg_sharpe +
+        0.25 × penetration_rate +
+        0.25 × recommend_freq -
+        0.15 × sharpe_std -
+        0.05 × abs(worst_sharpe if < 0)
+```
+
+**Interpretation:**
+- High score → Portfolio consistently performs well across different time periods
+- Top-ranked portfolios are ideal candidates for leveraged trading
+
+### Performance
+
+- **Annual windows** (5 windows): ~45 seconds with 4-core parallel execution
+- **Quarterly rolling** (17 windows): ~1.5 minutes with 8-core parallel execution
+
+### Example Output
+
+```
+【Top 5 稳健组合】（按稳健评分降序）
+排名  策略组成                      推荐频率  平均夏普  夏普标准差  最差夏普  最佳夏普  穿越率    稳健评分
+1     sma_cross,rsi_reversal       100%     1.68      0.18       1.45     1.92     100%     0.92
+2     turtle_sys1,macd_trend        80%     1.54      0.25       1.22     1.85     100%     0.85
+...
+
+→ Portfolio #1 appeared in ALL 5 windows with Sharpe always > 1.4 ⭐⭐⭐
+```
+
+## Portfolio Atom Validation
+
+The system includes a validation tool to compare actual portfolio atom execution vs theoretical testing results.
+
+### Purpose
+
+When a portfolio combination is identified as robust through rolling validation, the next step is to validate how it performs when executed as a single-account portfolio atom vs theoretical multi-account testing.
+
+**Two execution approaches:**
+1. **Theoretical Testing** (`portfolio_backtest.py`): Assumes multiple independent accounts, each running a single strategy, then calculates weighted average of returns
+2. **Actual Execution** (Portfolio Atom): Single account running a combined strategy using virtual position simulation
+
+**Key differences:**
+- **Signal Aggregation**: Single account requires aggregated signals to exceed a threshold before trading
+- **Trade Timing**: Actual execution may have different entry/exit times due to signal weighting
+- **Trade Frequency**: Signal cancellation may reduce total trades in single-account execution
+- **Costs**: Single account has one transaction cost vs sum of individual costs in theory
+
+### Prerequisites
+
+Both the portfolio atom and all constituent strategies must have backtest data:
+
+```bash
+# Ensure all constituent strategies have been backtested on full historical period
+bash run_all_strategies_2020_2024.sh
+
+# The portfolio atom must also be registered and backtested
+python bt_main.py --atom portfolio_rank3_combo --start 2020-01-01 --end 2024-12-31 --timeframe d1
+```
+
+### Running Atom Validation
+
+**Basic usage:**
+```bash
+python rolling_atom_validator.py --atom portfolio_rank3_combo --timeframe d1
+```
+
+**Custom window configuration:**
+```bash
+python rolling_atom_validator.py \
+  --atom portfolio_rank3_combo \
+  --timeframe d1 \
+  --window-months 12 \
+  --step-months 6
+```
+
+**Parallel execution:**
+```bash
+python rolling_atom_validator.py \
+  --atom portfolio_rank3_combo \
+  --workers auto
+```
+
+### How It Works
+
+1. **Generate Windows**: Creates rolling time windows (e.g., 5 annual windows: 2020-2024)
+
+2. **For Each Window**:
+   - **Actual Execution**: Runs the portfolio atom backtest using `Runner`
+   - **Theoretical Testing**: Calculates weighted average using `backtest_portfolio_from_daily_values()`
+   - **Compare Metrics**: Calculates differences across 4 key metrics
+
+3. **Generate Report**: Produces detailed CSV and terminal output with:
+   - Per-window comparison
+   - Aggregate statistics
+   - Key insights and recommendations
+
+### Comparison Metrics
+
+**1. Return Percentage**: Absolute return difference
+- Identifies revenue impact of single-account execution
+
+**2. Sharpe Ratio**: Risk-adjusted return difference
+- Shows if risk/reward profile changes
+
+**3. Trade Frequency**: Number of trades difference
+- Critical for cost analysis (fewer trades = lower costs)
+
+**4. Maximum Drawdown**: Risk characteristic difference
+- Indicates if single-account execution is more/less risky
+
+### Output Files
+
+**Detailed CSV**: `backtest_results/atom_validation/atom_vs_theory_comparison_{atom_name}_{timeframe}.csv`
+- Columns: window details, actual metrics, theory metrics, differences (absolute & percentage)
+
+**Summary Report**: `backtest_results/atom_validation/atom_vs_theory_summary_{atom_name}_{timeframe}.txt`
+- Aggregate statistics and recommendations
+
+**Terminal Output**: Per-window analysis with insights like:
+```
+【窗口1】2020-01-01 to 2020-12-31
+  实际执行: 收益率=15.2%, 夏普=1.85, 交易次数=45, 最大回撤=-3.2%
+  理论测试: 收益率=16.8%, 夏普=1.92, 交易次数=120, 最大回撤=-3.5%
+  差异分析:
+    ✓ 收益率: -1.6% (-9.5%)   理论更优
+    ✓ 夏普比率: -0.07 (-3.6%)  理论更优
+    ✓ 交易频率: -75 (-62.5%)   实际更少（成本更低）
+    ✓ 最大回撤: +0.3% (-8.6%)  实际更好（风险更低）
+
+【汇总统计】跨5个窗口
+  - 收益率差异: -2.1% (实际比理论低2.1%)
+  - 夏普差异: -0.05 (实际比理论低0.05)
+  - 交易频率差异: -68次/年 (实际减少57%交易)
+  - 回撤差异: +0.2% (实际回撤更小)
+
+建议:
+  ✓ 该组合适合单账户实际执行
+  ✓ 交易成本节省可能抵消部分收益下降
+```
+
+### Adding New Portfolio Atoms
+
+To validate a new portfolio atom, add its configuration to `ATOM_CONFIGS` in `rolling_atom_validator.py`:
+
+```python
+ATOM_CONFIGS = {
+    'portfolio_rank3_combo': {
+        'strategies': ['vol_breakout_aggressive', 'vol_regime_long', 'triple_ma', 'rsi_reversal'],
+        'weights': [0.0843, 0.2390, 0.3366, 0.3401],
+        'description': 'Robust ranking #3: Volatility + Trend + Mean Reversion',
+    },
+    'your_new_portfolio': {
+        'strategies': ['strategy1', 'strategy2', 'strategy3'],
+        'weights': [0.33, 0.33, 0.34],
+        'description': 'Your portfolio description',
+    },
+}
+```
+
+### Performance
+
+- **Per window**: 2-5 minutes (includes full backtest execution)
+- **5 annual windows (serial)**: ~10-25 minutes
+- **5 annual windows (parallel, 4 cores)**: ~5-10 minutes
+
+### Interpretation Guide
+
+**Good alignment** (實際 ≈ 理論):
+- Return difference: < ±3%
+- Sharpe difference: < ±0.15
+- Trade frequency: -20% to +20%
+- Max drawdown: < ±1%
+
+**Acceptable with benefits** (實際 < 理論 but reduced trades):
+- Return slightly lower (-5% to -2%)
+- Sharpe slightly lower (-0.2 to -0.1)
+- **Trade frequency significantly lower** (-30% or more)
+- Drawdown similar or better
+
+**Requires investigation** (大差異):
+- Return difference: > ±10%
+- Sharpe difference: > ±0.3
+- Trade frequency: > ±50%
+- Max drawdown: > ±3%
 
 ## Known Issues & Limitations
 

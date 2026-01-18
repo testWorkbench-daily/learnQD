@@ -5,3 +5,7 @@
 3. 后续的仓位管理、风险管理、测试等：https://claude.ai/chat/7e1839ab-abdf-4d05-be64-304d08362d2f
 4. 研究其他期货：https://claude.ai/chat/12cf948f-1c4c-4334-8c34-efa52c6f6d79
 5. 还是量化为主，基本面作为否定量化的终极办法，不要一开始先陷入基本面的一些所谓经验中
+6. https://claude.ai/chat/7e1839ab-abdf-4d05-be64-304d08362d2f
+7. ![仓位控制开发思路](image.png)
+8. 跑代码的步骤：PORTFOLIO_WORKFLOW_GUIDE.md
+9. ![其他核心关注问题](image-1.png)

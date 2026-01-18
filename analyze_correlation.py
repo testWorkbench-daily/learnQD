@@ -26,20 +26,25 @@ plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 class StrategyCorrelationAnalyzer:
     """策略相关性分析器"""
 
-    def __init__(self, start_date: str, end_date: str, timeframe: str, results_dir: str = 'backtest_results'):
+    def __init__(self, start_date: str, end_date: str, timeframe: str, results_dir: str = 'backtest_results',
+                 data_start_date: str = None, data_end_date: str = None):
         """
         初始化分析器
 
         Args:
-            start_date: 开始日期 (格式: YYYYMMDD)
-            end_date: 结束日期 (格式: YYYYMMDD)
+            start_date: 开始日期 (格式: YYYYMMDD) - 窗口开始日期
+            end_date: 结束日期 (格式: YYYYMMDD) - 窗口结束日期
             timeframe: 时间周期 (如: d1, h1, m1)
             results_dir: 回测结果目录
+            data_start_date: 数据文件开始日期 (YYYYMMDD) - 用于匹配文件名，如不提供则使用start_date
+            data_end_date: 数据文件结束日期 (YYYYMMDD) - 用于匹配文件名，如不提供则使用end_date
         """
         self.start_date = start_date
         self.end_date = end_date
         self.timeframe = timeframe
         self.results_dir = results_dir
+        self.data_start_date = data_start_date if data_start_date else start_date
+        self.data_end_date = data_end_date if data_end_date else end_date
         self.daily_returns = {}  # {strategy_name: daily_return_series}
 
     def load_strategy_returns(self) -> Dict[str, pd.Series]:
@@ -49,7 +54,7 @@ class StrategyCorrelationAnalyzer:
         Returns:
             字典，键为策略名称，值为收益率序列
         """
-        pattern = f"daily_values_*_{self.timeframe}_{self.start_date}_{self.end_date}.csv"
+        pattern = f"daily_values_*_{self.timeframe}_{self.data_start_date}_{self.data_end_date}.csv"
         files = list(Path(self.results_dir).glob(pattern))
 
         if not files:
@@ -71,6 +76,17 @@ class StrategyCorrelationAnalyzer:
                 df = pd.read_csv(file)
                 df['datetime'] = pd.to_datetime(df['datetime'])
                 df = df.sort_values('datetime')
+
+                # CRITICAL: ALWAYS filter to analysis window to prevent look-ahead bias
+                # Even if start_date == data_start_date, we must filter to ensure
+                # correlation matrix only uses data from the specified window
+                start_dt = pd.to_datetime(self.start_date, format='%Y%m%d')
+                end_dt = pd.to_datetime(self.end_date, format='%Y%m%d')
+                df = df[(df['datetime'] >= start_dt) & (df['datetime'] <= end_dt)]
+
+                if df.empty:
+                    print(f"  ✗ {strategy_name}: 窗口内无数据 ({self.start_date} ~ {self.end_date})")
+                    continue
 
                 # 提取每日收益率
                 returns = df['daily_return'].values

@@ -24,24 +24,37 @@ from typing import Dict, List
 class StrategyMetrics:
     """从 daily_values 计算策略指标"""
 
-    def __init__(self, daily_values_file: str):
+    def __init__(self, daily_values_file: str, start_date: str = None, end_date: str = None):
         """
         初始化
 
         Args:
             daily_values_file: daily_values CSV 文件路径
                 格式: datetime, portfolio_value, daily_return, cumulative_return
+            start_date: 开始日期 (YYYYMMDD) - 可选，用于过滤数据
+            end_date: 结束日期 (YYYYMMDD) - 可选，用于过滤数据
         """
         self.file_path = daily_values_file
+        self.start_date = start_date
+        self.end_date = end_date
         self.df = None
         self._load_data()
 
     def _load_data(self):
-        """加载数据"""
+        """加载数据并过滤日期范围"""
         try:
             self.df = pd.read_csv(self.file_path)
             self.df['datetime'] = pd.to_datetime(self.df['datetime'])
             self.df = self.df.sort_values('datetime')
+
+            # 如果提供了日期范围，过滤数据
+            if self.start_date:
+                start_dt = pd.to_datetime(self.start_date, format='%Y%m%d')
+                self.df = self.df[self.df['datetime'] >= start_dt]
+            if self.end_date:
+                end_dt = pd.to_datetime(self.end_date, format='%Y%m%d')
+                self.df = self.df[self.df['datetime'] <= end_dt]
+
         except Exception as e:
             raise FileNotFoundError(f"无法加载文件 {self.file_path}: {e}")
 
@@ -162,23 +175,31 @@ class QualityFilter:
     """质量评分和筛选"""
 
     def __init__(self, results_dir: str, timeframe: str, start_date: str, end_date: str,
-                 price_data_file: str = './data/nq_m1_forward_adjusted.csv'):
+                 price_data_file: str = './data/nq_m1_forward_adjusted.csv',
+                 data_start_date: str = None, data_end_date: str = None):
         """
         初始化
 
         Args:
             results_dir: 回测结果目录
             timeframe: 时间周期 (如 d1, h1)
-            start_date: 开始日期 (YYYYMMDD)
-            end_date: 结束日期 (YYYYMMDD)
+            start_date: 开始日期 (YYYYMMDD) - 窗口开始日期
+            end_date: 结束日期 (YYYYMMDD) - 窗口结束日期
             price_data_file: 价格数据文件路径
+            data_start_date: 数据文件开始日期 (YYYYMMDD) - 用于匹配文件名，如不提供则使用start_date
+            data_end_date: 数据文件结束日期 (YYYYMMDD) - 用于匹配文件名，如不提供则使用end_date
         """
         self.results_dir = results_dir
         self.timeframe = timeframe
         self.start_date = start_date
         self.end_date = end_date
         self.price_data_file = price_data_file
-        self.pattern = f"daily_values_*_{timeframe}_{start_date}_{end_date}.csv"
+
+        # 使用数据文件日期范围匹配文件，如果未提供则使用窗口日期
+        file_start = data_start_date if data_start_date else start_date
+        file_end = data_end_date if data_end_date else end_date
+        self.pattern = f"daily_values_*_{timeframe}_{file_start}_{file_end}.csv"
+
         self.all_metrics = {}  # {strategy_name: metrics_dict}
         self.buy_hold_metrics = None  # 买入并持有基准
 
@@ -199,8 +220,13 @@ class QualityFilter:
         print(f"找到 {len(files)} 个策略的 daily_values 文件")
 
         for file in files:
+            # 排除组合策略文件（portfolio_*）
+            if 'portfolio_' in file.name:
+                continue
+
             try:
-                metrics_calc = StrategyMetrics(str(file))
+                # 传递日期范围用于过滤数据
+                metrics_calc = StrategyMetrics(str(file), self.start_date, self.end_date)
                 metrics = metrics_calc.calculate_metrics()
                 strategy_name = metrics['name']
                 self.all_metrics[strategy_name] = metrics
