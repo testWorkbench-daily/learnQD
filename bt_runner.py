@@ -189,14 +189,16 @@ class Runner:
             results.append(result)
         
         # 打印对比表
-        print('\n' + '=' * 60)
+        print('\n' + '=' * 80)
         print('策略对比')
-        print('=' * 60)
-        print(f"{'策略名称':<12} {'收益率':>10} {'夏普':>8} {'回撤':>8} {'胜率':>8}")
-        print('-' * 60)
+        print('=' * 80)
+        print(f"{'策略名称':<20} {'收益率':>10} {'夏普':>8} {'回撤':>8} {'胜率':>8} {'盈亏比':>10}")
+        print('-' * 80)
         for r in results:
-            print(f"{r['name']:<20} {r['return_pct']:>9.2f}% {r['sharpe']:>8.2f} {r['max_dd']:>7.2f}% {r['win_rate']:>7.2f}%")
-        
+            pf = r.get('profit_factor', 0)
+            pf_str = '∞' if pf >= 999 else f'{pf:.2f}'
+            print(f"{r['name']:<20} {r['return_pct']:>9.2f}% {r['sharpe']:>8.2f} {r['max_dd']:>7.2f}% {r['win_rate']:>7.2f}% {pf_str:>10}")
+
         return results
     
     def _load_data(self, cerebro: bt.Cerebro):
@@ -376,8 +378,12 @@ class Runner:
             'win_rate': recorder.get('win_rate', 0),
             'total_pnl': recorder.get('total_pnl', 0),
             'trading_days': trading_days,
+            'profit_factor': recorder.get('profit_factor', 0),
+            'avg_win': recorder.get('avg_win', 0),
+            'avg_loss': recorder.get('avg_loss', 0),
+            'expectancy': recorder.get('expectancy', 0),
         }
-        
+
         # 打印结果
         sharpe_tf, sharpe_comp = self.SHARPE_TIMEFRAME_MAP[self.timeframe]
         sharpe_desc = self._get_sharpe_period_description(sharpe_tf, sharpe_comp)
@@ -395,6 +401,16 @@ class Runner:
         print(f'  最大回撤: {max_dd:.2f}%')
         print(f'  交易次数: {recorder["total"]}')
         print(f'  胜率: {recorder.get("win_rate", 0):.2f}%')
+
+        # 盈亏比指标
+        profit_factor = recorder.get('profit_factor', 0)
+        if profit_factor >= 999:
+            print(f'  盈亏比 (Profit Factor): ∞ (无亏损交易)')
+        else:
+            print(f'  盈亏比 (Profit Factor): {profit_factor:.2f}')
+        print(f'  平均盈利: ${recorder.get("avg_win", 0):,.2f}')
+        print(f'  平均亏损: ${recorder.get("avg_loss", 0):,.2f}')
+        print(f'  期望值: ${recorder.get("expectancy", 0):,.2f}')
 
         return result
     

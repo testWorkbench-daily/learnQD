@@ -180,6 +180,52 @@ class WalkForwardValidator:
         self.train_results = []  # 训练期优化结果
         self.test_results = []  # 测试期验证结果
 
+    def detect_market_direction(self, start: pd.Timestamp, end: pd.Timestamp) -> tuple:
+        """
+        检测市场方向
+
+        Args:
+            start: 开始日期
+            end: 结束日期
+
+        Returns:
+            (direction, return_pct) where direction is 'bull'/'bear'/'neutral'
+        """
+        try:
+            # 加载NQ价格数据
+            nq_data = pd.read_csv('data/nq_m1_forward_adjusted.csv')
+            # 列名是 'ts_event', 不是 'datetime'
+            nq_data['ts_event'] = pd.to_datetime(nq_data['ts_event'])
+
+            # 过滤到指定范围
+            period_data = nq_data[
+                (nq_data['ts_event'] >= start) &
+                (nq_data['ts_event'] <= end)
+            ]
+
+            if len(period_data) == 0:
+                return 'unknown', 0.0
+
+            # 计算期间收益率
+            start_price = period_data['close'].iloc[0]
+            end_price = period_data['close'].iloc[-1]
+            return_pct = (end_price / start_price - 1) * 100
+
+            if return_pct > 5:
+                direction = 'bull'
+            elif return_pct < -5:
+                direction = 'bear'
+            else:
+                direction = 'neutral'
+
+            return direction, return_pct
+
+        except Exception as e:
+            print(f"    警告: 无法检测市场方向: {e}")
+            import traceback
+            traceback.print_exc()
+            return 'unknown', 0.0
+
     def generate_windows(self) -> List[Tuple]:
         """
         生成训练/测试窗口
@@ -214,9 +260,19 @@ class WalkForwardValidator:
 
             windows.append((train_start, train_end, test_start, test_end))
 
+            # 检测市场方向
+            train_direction, train_return = self.detect_market_direction(train_start, train_end)
+            test_direction, test_return = self.detect_market_direction(test_start, test_end)
+
             print(f"窗口 {len(windows)}:")
-            print(f"  训练期: {train_start.strftime('%Y-%m-%d')} ~ {train_end.strftime('%Y-%m-%d')}")
-            print(f"  测试期: {test_start.strftime('%Y-%m-%d')} ~ {test_end.strftime('%Y-%m-%d')}")
+            print(f"  训练期: {train_start.strftime('%Y-%m-%d')} ~ {train_end.strftime('%Y-%m-%d')} "
+                  f"[{train_direction.upper()}: {train_return:+.1f}%]")
+            print(f"  测试期: {test_start.strftime('%Y-%m-%d')} ~ {test_end.strftime('%Y-%m-%d')} "
+                  f"[{test_direction.upper()}: {test_return:+.1f}%]")
+
+            # 警告：市场方向反转
+            if train_direction != test_direction and train_direction != 'unknown' and test_direction != 'unknown':
+                print(f"  ⚠️  市场方向反转: {train_direction} → {test_direction} (预期过拟合指数较高)")
 
             # 移动到下一个窗口
             current_start = current_start + relativedelta(months=self.step_months)
@@ -250,17 +306,55 @@ class WalkForwardValidator:
         print(f"训练范围: {train_start_str} ~ {train_end_str}")
         print(f"数据文件: {data_start_str} ~ {data_end_str}")
 
+        # 动态调整优化器参数（基于训练期长度和市场环境）
+        train_duration_months = (train_end - train_start).days / 30
+        train_direction, train_return = self.detect_market_direction(train_start, train_end)
+
+        # 默认参数
+        min_sharpe = 0.5
+        top_n_quality = 20
+        correlation_threshold = self.correlation_threshold
+
+        # 根据训练期长度调整
+        if train_duration_months <= 6:
+            # 短训练期：严格筛选，减少候选
+            min_sharpe = 1.0
+            top_n_quality = 10
+            correlation_threshold = max(0.4, self.correlation_threshold)
+            print(f"  配置: 短训练期 ({train_duration_months:.0f}月) - 严格筛选")
+        elif train_duration_months >= 12:
+            # 长训练期：可以适当放宽
+            min_sharpe = 0.5
+            top_n_quality = 20
+            correlation_threshold = self.correlation_threshold
+            print(f"  配置: 长训练期 ({train_duration_months:.0f}月) - 标准筛选")
+        else:
+            # 中等训练期
+            min_sharpe = 0.7
+            top_n_quality = 15
+            correlation_threshold = min(0.35, self.correlation_threshold)
+            print(f"  配置: 中等训练期 ({train_duration_months:.0f}月) - 中等筛选")
+
+        # 根据市场环境调整（熊市放宽要求）
+        if train_direction == 'bear':
+            min_sharpe = max(0.0, min_sharpe - 0.5)  # 熊市降低夏普要求
+            print(f"  市场环境: {train_direction.upper()} ({train_return:+.1f}%) - 放宽夏普要求至 {min_sharpe:.1f}")
+        elif train_direction == 'bull':
+            print(f"  市场环境: {train_direction.upper()} ({train_return:+.1f}%) - 标准要求")
+        else:
+            print(f"  市场环境: {train_direction.upper()} ({train_return:+.1f}%)")
+
         try:
             # 调用优化器(传入训练期窗口和完整数据文件范围)
             portfolios_df = optimize_programmatically(
                 start_date=train_start_str,
                 end_date=train_end_str,
                 timeframe=self.timeframe,
-                min_sharpe=0.5,
+                min_sharpe=min_sharpe,
                 min_return=1.0,
                 max_drawdown=-10.0,
-                top_n_quality=20,
-                correlation_threshold=self.correlation_threshold,
+                top_n_quality=top_n_quality,
+                correlation_threshold=correlation_threshold,
                 min_strategies=2,
                 max_strategies=4,
                 weight_methods=['sharpe_weighted', 'risk_parity', 'max_sharpe'],

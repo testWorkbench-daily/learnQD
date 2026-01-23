@@ -70,11 +70,11 @@ class FixedRiskSizer(bt.Sizer):
 # =============================================================================
 class TradeRecorder(bt.Analyzer):
     """交易记录器"""
-    
+
     def __init__(self):
         self.trades = []
         self.trade_count = 0
-    
+
     def notify_trade(self, trade):
         if trade.isclosed:
             self.trade_count += 1
@@ -86,23 +86,105 @@ class TradeRecorder(bt.Analyzer):
                 'size': trade.size,
                 'price': trade.price,
             })
-    
+
     def get_analysis(self):
         if not self.trades:
-            return {'total': 0, 'trades': []}
-        
+            return {
+                'total': 0,
+                'trades': [],
+                'wins': 0,
+                'losses': 0,
+                'win_rate': 0.0,
+                'total_pnl': 0.0,
+                'avg_pnl': 0.0,
+                'profit_factor': 0.0,
+                'avg_win': 0.0,
+                'avg_loss': 0.0,
+                'win_loss_ratio': 0.0,
+                'expectancy': 0.0,
+                'max_win': 0.0,
+                'max_loss': 0.0,
+                'consecutive_wins': 0,
+                'consecutive_losses': 0,
+            }
+
         wins = [t for t in self.trades if t['pnlcomm'] > 0]
-        losses = [t for t in self.trades if t['pnlcomm'] <= 0]
-        
+        losses = [t for t in self.trades if t['pnlcomm'] < 0]
+
+        # 基本统计
+        total_pnl = sum(t['pnlcomm'] for t in self.trades)
+        avg_pnl = total_pnl / len(self.trades)
+        win_rate = len(wins) / len(self.trades) * 100 if self.trades else 0.0
+
+        # 盈亏比相关指标
+        total_win = sum(t['pnlcomm'] for t in wins) if wins else 0.0
+        total_loss = abs(sum(t['pnlcomm'] for t in losses)) if losses else 0.0
+        avg_win = total_win / len(wins) if wins else 0.0
+        avg_loss = total_loss / len(losses) if losses else 0.0
+
+        # Profit Factor (盈亏比 = 总盈利/总亏损)
+        if total_loss > 0:
+            profit_factor = total_win / total_loss
+        elif total_win > 0:
+            profit_factor = 999.99  # 无穷大标记（只有盈利，无亏损）
+        else:
+            profit_factor = 0.0
+
+        # Win/Loss Ratio (平均盈利/平均亏损)
+        if avg_loss > 0:
+            win_loss_ratio = avg_win / avg_loss
+        elif avg_win > 0:
+            win_loss_ratio = 999.99  # 无穷大标记
+        else:
+            win_loss_ratio = 0.0
+
+        # 期望值 = (胜率 × 平均盈利) - ((1-胜率) × 平均亏损)
+        expectancy = (win_rate / 100 * avg_win) - ((1 - win_rate / 100) * avg_loss)
+
+        # 单笔极值
+        max_win = max((t['pnlcomm'] for t in wins), default=0.0)
+        max_loss = min((t['pnlcomm'] for t in losses), default=0.0)  # 负数，最小值
+
+        # 连续盈亏
+        consecutive_wins = self._calculate_max_consecutive(wins=True)
+        consecutive_losses = self._calculate_max_consecutive(wins=False)
+
         return {
             'total': len(self.trades),
             'wins': len(wins),
             'losses': len(losses),
-            'win_rate': len(wins) / len(self.trades) * 100,
-            'total_pnl': sum(t['pnlcomm'] for t in self.trades),
-            'avg_pnl': sum(t['pnlcomm'] for t in self.trades) / len(self.trades),
+            'win_rate': win_rate,
+            'total_pnl': total_pnl,
+            'avg_pnl': avg_pnl,
+            'profit_factor': profit_factor,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'win_loss_ratio': win_loss_ratio,
+            'expectancy': expectancy,
+            'max_win': max_win,
+            'max_loss': max_loss,
+            'consecutive_wins': consecutive_wins,
+            'consecutive_losses': consecutive_losses,
             'trades': self.trades,
         }
+
+    def _calculate_max_consecutive(self, wins: bool) -> int:
+        """计算最长连续盈利或亏损次数"""
+        if not self.trades:
+            return 0
+
+        max_consecutive = 0
+        current_consecutive = 0
+
+        for trade in self.trades:
+            is_win = trade['pnlcomm'] > 0
+            if is_win == wins:
+                current_consecutive += 1
+                max_consecutive = max(max_consecutive, current_consecutive)
+            else:
+                current_consecutive = 0
+
+        return max_consecutive
 
 
 class DailyValueRecorder(bt.Analyzer):

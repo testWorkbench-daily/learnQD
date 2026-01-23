@@ -51,13 +51,7 @@ backtest_results/daily_values_rsi_reversal_d1_20200101_20241231.csv
 # 6. 运行相关性分析
 
 ```bash
-python analyze_correlation.py \
-  --start 20200101 \
-  --end 20241231 \
-  --timeframe d1 \
-  --threshold 0.3 \
-  --max-strategies 4 \
-  --results-dir backtest_results
+python analyze_correlation.py --start 20170101 --end 20251231 --timeframe d1 --threshold 0.3 --max-strategies 4 --results-dir backtest_results
 ```
 
 **参数说明**：

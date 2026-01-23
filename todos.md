@@ -9,5 +9,14 @@
 7. ![仓位控制开发思路](image.png)
 8. 跑代码的步骤：PORTFOLIO_WORKFLOW_GUIDE.md
 9. ![其他核心关注问题](image-1.png)
+10. 纯粹的价量因子是无法预测长期走势的：nq_trading_system_research_roadmap
 
 python walk_forward_validator.py --data-start 20200101 --data-end 20241231--timeframe d1 --train-months 24 --test-months 12 --step-months 12 --top-n 20
+
+
+
+# 整体流程步骤
+1. 处理数据
+2. 跑单独策略，用bt_main或者run_all_strategies_2020_2024
+3. 跑相关性，看热力图低相关性
+4. 跑策略组合，用低相关性做组合
