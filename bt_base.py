@@ -188,41 +188,69 @@ class TradeRecorder(bt.Analyzer):
 
 
 class DailyValueRecorder(bt.Analyzer):
-    """记录每日组合价值和收益率"""
-    
+    """记录每日组合价值和收益率（按交易日采样，避免高频数据污染）"""
+
     def __init__(self):
         self.daily_values = []
         self.prev_value = None
         self.initial_value = None
-    
+        self.prev_date = None  # 用于检测新交易日
+        self.current_day_value = None  # 当天最新的账户价值
+
     def start(self):
         # 记录初始资金
         self.initial_value = self.strategy.broker.getvalue()
         self.prev_value = self.initial_value
-    
+        self.prev_date = None
+        self.current_day_value = self.initial_value
+
     def next(self):
-        # 每个bar记录一次价值(后续会根据timeframe过滤)
+        # 只在交易日边界记录（新的一天才记录上一天的收盘价值）
         current_value = self.strategy.broker.getvalue()
         dt = self.strategy.datetime.datetime(0)
-        
-        daily_return = 0.0
-        if self.prev_value > 0:
-            daily_return = (current_value - self.prev_value) / self.prev_value
-        
-        self.daily_values.append({
-            'datetime': dt,
-            'portfolio_value': current_value,
-            'daily_return': daily_return,
-            'cumulative_return': (current_value - self.initial_value) / self.initial_value
-        })
-        
-        self.prev_value = current_value
-    
+        current_date = dt.date()
+
+        # 更新当天的最新价值（每个bar都更新，但只在日边界记录）
+        self.current_day_value = current_value
+
+        # 检测到新的交易日 -> 记录前一天的数据
+        if self.prev_date is not None and current_date != self.prev_date:
+            # 记录前一天的收盘价值
+            daily_return = 0.0
+            if self.prev_value > 0:
+                daily_return = (self.current_day_value - self.prev_value) / self.prev_value
+
+            self.daily_values.append({
+                'datetime': self.prev_date,  # 使用前一天的日期
+                'portfolio_value': self.current_day_value,
+                'daily_return': daily_return,
+                'cumulative_return': (self.current_day_value - self.initial_value) / self.initial_value
+            })
+
+            self.prev_value = self.current_day_value
+
+        self.prev_date = current_date
+
+    def stop(self):
+        # 回测结束时，记录最后一天的数据
+        if self.prev_date is not None:
+            current_value = self.current_day_value
+            daily_return = 0.0
+            if self.prev_value > 0:
+                daily_return = (current_value - self.prev_value) / self.prev_value
+
+            self.daily_values.append({
+                'datetime': self.prev_date,
+                'portfolio_value': current_value,
+                'daily_return': daily_return,
+                'cumulative_return': (current_value - self.initial_value) / self.initial_value
+            })
+
     def get_analysis(self):
         return {
             'daily_values': self.daily_values,
             'initial_value': self.initial_value,
-            'final_value': self.prev_value if self.prev_value else self.initial_value
+            'final_value': self.current_day_value if self.current_day_value else self.initial_value
         }
 
 

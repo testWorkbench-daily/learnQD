@@ -19,6 +19,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Dict, List
+from bt_runner import calculate_sharpe_ratio, calculate_annualized_return
 
 
 class StrategyMetrics:
@@ -88,12 +89,9 @@ class StrategyMetrics:
         final_value = self.df['portfolio_value'].iloc[-1]
         total_return = (final_value / initial_value - 1) * 100  # 百分比
 
-        # 夏普比率（年化）
+        # 夏普比率（年化，使用统一方法）
         daily_returns = self.df['daily_return'].values
-        if len(daily_returns) > 1 and daily_returns.std() > 0:
-            sharpe_ratio = daily_returns.mean() / daily_returns.std() * np.sqrt(252)
-        else:
-            sharpe_ratio = 0.0
+        sharpe_ratio = calculate_sharpe_ratio(daily_returns, annualize=True, periods_per_year=252)
 
         # 波动率（年化）
         volatility = daily_returns.std() * np.sqrt(252) * 100  # 百分比
@@ -541,11 +539,8 @@ class QualityFilter:
             # 计算每日收益率
             daily_returns = np.diff(prices) / prices[:-1]
 
-            # 夏普比率
-            if len(daily_returns) > 1 and daily_returns.std() > 0:
-                sharpe_ratio = daily_returns.mean() / daily_returns.std() * np.sqrt(252)
-            else:
-                sharpe_ratio = 0.0
+            # 夏普比率（使用统一方法）
+            sharpe_ratio = calculate_sharpe_ratio(daily_returns, annualize=True, periods_per_year=252)
 
             # 波动率
             volatility = daily_returns.std() * np.sqrt(252) * 100  # 百分比

@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any
+from bt_runner import calculate_sharpe_ratio, calculate_annualized_return
 
 
 def load_strategy_data(strategy_name: str, timeframe: str, start_date: str, end_date: str, results_dir: str = 'backtest_results') -> pd.DataFrame:
@@ -60,17 +61,18 @@ def calculate_metrics(df: pd.DataFrame, initial_value: float = 100000) -> Dict[s
     final_value = df['portfolio_value'].iloc[-1]
     return_pct = (final_value / initial_value - 1) * 100
 
-    # 年化收益
+    # 年化收益（使用复利公式）
     trading_days = len(df)
-    annualized_return = return_pct * (252 / trading_days) if trading_days > 0 else 0.0
+    total_return = return_pct / 100
+    annualized_return = calculate_annualized_return(total_return, trading_days, periods_per_year=252) * 100
 
     # 年化波动率
     returns = df['daily_return'].values[1:]  # 排除第一天
     volatility = np.std(returns, ddof=1) * np.sqrt(252) * 100 if len(returns) > 1 else 0.0
 
-    # 夏普比率
-    if len(returns) > 1 and np.std(returns, ddof=1) > 0:
-        sharpe = (np.mean(returns) / np.std(returns, ddof=1)) * np.sqrt(252)
+    # 夏普比率（使用统一方法）
+    if len(returns) > 1:
+        sharpe = calculate_sharpe_ratio(returns, annualize=True, periods_per_year=252)
     else:
         sharpe = 0.0
 

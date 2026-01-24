@@ -17,6 +17,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import List, Dict, Tuple
+from bt_runner import calculate_sharpe_ratio, calculate_annualized_return
 
 # 配置matplotlib支持中文显示
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'PingFang SC', 'Heiti TC', 'SimHei', 'DejaVu Sans']
@@ -300,9 +301,9 @@ class StrategyCorrelationAnalyzer:
 
         # 计算绩效指标
         total_return = (1 + portfolio_returns).prod() - 1
-        annualized_return = (1 + total_return) ** (252 / len(portfolio_returns)) - 1
+        annualized_return = calculate_annualized_return(total_return, len(portfolio_returns), periods_per_year=252)
         volatility = portfolio_returns.std() * np.sqrt(252)
-        sharpe_ratio = annualized_return / volatility if volatility > 0 else 0
+        sharpe_ratio = calculate_sharpe_ratio(portfolio_returns.values, annualize=True, periods_per_year=252)
 
         # 最大回撤
         cumulative = (1 + portfolio_returns).cumprod()

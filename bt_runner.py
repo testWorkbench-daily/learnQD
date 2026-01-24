@@ -6,8 +6,64 @@ import datetime
 import os
 import pandas as pd
 import time
+import numpy as np
 from typing import Optional, Dict, Any, List
 from bt_base import StrategyAtom, TradeRecorder, DailyValueRecorder
+
+
+# =============================================================================
+# 统一的指标计算函数
+# =============================================================================
+
+def calculate_sharpe_ratio(daily_returns, annualize=True, periods_per_year=252):
+    """
+    计算夏普比率（统一方法）
+
+    参数:
+        daily_returns: numpy array 或 list，日级收益率（未年化）
+        annualize: 是否年化，默认 True
+        periods_per_year: 每年的周期数，默认 252（交易日）
+
+    返回:
+        sharpe_ratio: float，年化夏普比率（如果 annualize=True）
+    """
+    if len(daily_returns) < 2:
+        return 0.0
+
+    returns_array = np.array(daily_returns)
+    mean_return = np.mean(returns_array)
+    std_return = np.std(returns_array, ddof=1)  # 使用样本标准差
+
+    if std_return == 0:
+        return 0.0
+
+    sharpe_ratio = mean_return / std_return
+
+    if annualize:
+        sharpe_ratio *= np.sqrt(periods_per_year)
+
+    return sharpe_ratio
+
+
+def calculate_annualized_return(total_return, num_periods, periods_per_year=252):
+    """
+    计算年化收益率（复利方法）
+
+    参数:
+        total_return: 总收益率（小数形式，如 0.15 表示 15%）
+        num_periods: 总周期数（如 252 表示一年的交易日）
+        periods_per_year: 每年的周期数，默认 252
+
+    返回:
+        annualized_return: float，年化收益率（小数形式）
+    """
+    if num_periods <= 0:
+        return 0.0
+
+    # 复利公式: (1 + total_return) ^ (periods_per_year / num_periods) - 1
+    annualized_return = (1 + total_return) ** (periods_per_year / num_periods) - 1
+
+    return annualized_return
 
 
 class Runner:
@@ -289,60 +345,36 @@ class Runner:
         # 夏普比率
         sharpe = strat.analyzers.sharperatio.get_analysis()
         sharpe_ratio = sharpe.get('sharperatio')
-        
+
         # 标记是否使用了原生计算
         used_native_sharpe = (sharpe_ratio is not None and sharpe_ratio != 0)
-        
-        # 如果sharperatio为None，尝试手动计算
+
+        # 如果sharperatio为None，尝试手动计算（使用统一方法）
         if sharpe_ratio is None:
             try:
-                import numpy as np
-                # 方法1: 从账户价值历史计算
-                if hasattr(strat, '_valuelist') and len(strat._valuelist) > 1:
-                    values = np.array(strat._valuelist)
-                    returns = np.diff(values) / values[:-1]  # 计算收益率
-                    if len(returns) > 0 and returns.std() > 0:
-                        sharpe_ratio = returns.mean() / returns.std() * np.sqrt(252)  # 年化
+                # 优先使用 DailyValueRecorder 的数据（已按日采样）
+                daily_value_analysis = strat.analyzers.dailyvaluerecorder.get_analysis()
+                daily_values = daily_value_analysis.get('daily_values', [])
+
+                if len(daily_values) > 1:
+                    # 从 daily_values 提取日收益率
+                    daily_returns = [dv['daily_return'] for dv in daily_values]
+                    sharpe_ratio = calculate_sharpe_ratio(daily_returns, annualize=True, periods_per_year=252)
+                    print(f'  [计算方法: DailyValueRecorder日收益率, 样本数={len(daily_returns)}]')
+                else:
+                    # Fallback: 从账户价值历史计算（假设按日采样）
+                    if hasattr(strat, '_valuelist') and len(strat._valuelist) > 1:
+                        values = np.array(strat._valuelist)
+                        returns = np.diff(values) / values[:-1]
+                        sharpe_ratio = calculate_sharpe_ratio(returns, annualize=True, periods_per_year=252)
                         print(f'  [计算方法: 账户价值序列, 样本数={len(returns)}]')
                     else:
                         sharpe_ratio = 0.0
-                else:
-                    # 方法2: 从Returns分析器获取
-                    returns_analyzer = strat.analyzers.returns.get_analysis()
-                    # 尝试多个可能的返回值结构
-                    returns_list = []
-                    if hasattr(returns_analyzer, 'get') and 'rtot' in returns_analyzer:
-                        rtot = returns_analyzer['rtot']
-                        if isinstance(rtot, dict):
-                            returns_list = list(rtot.values())
-                        elif isinstance(rtot, (list, tuple)):
-                            returns_list = list(rtot)
-                    
-                    if len(returns_list) > 1:
-                        returns_array = np.array(returns_list)
-                        if returns_array.std() > 0:
-                            sharpe_ratio = returns_array.mean() / returns_array.std()
-                            print(f'  [计算方法: Returns分析器, 样本数={len(returns_list)}]')
-                        else:
-                            sharpe_ratio = 0.0
-                    else:
-                        # 方法3: 从交易记录计算
-                        recorder = strat.analyzers.traderecorder.get_analysis()
-                        trades = recorder.get('trades', [])
-                        if len(trades) > 1:
-                            pnls = np.array([t['pnlcomm'] for t in trades])
-                            if pnls.std() > 0:
-                                sharpe_ratio = pnls.mean() / pnls.std()
-                                print(f'  [计算方法: 交易PnL序列, 样本数={len(trades)}]')
-                            else:
-                                sharpe_ratio = 0.0
-                        else:
-                            sharpe_ratio = 0.0
-                            print(f'  [警告: 无足够数据计算夏普比率 - 交易次数={len(trades)}]')
+                        print(f'  [警告: 无足够数据计算夏普比率]')
             except Exception as e:
                 sharpe_ratio = 0.0
                 print(f'  [夏普比率计算失败: {e}]')
-        
+
         if sharpe_ratio is None:
             sharpe_ratio = 0.0
         
@@ -356,11 +388,11 @@ class Runner:
         # 计算年化波动率
         volatility = self._calculate_volatility(strat)
 
-        # 计算年化收益率和交易天数
+        # 计算年化收益率和交易天数（使用复利公式）
         daily_recorder = strat.analyzers.dailyvaluerecorder.get_analysis()
         daily_values = daily_recorder.get('daily_values', [])
         trading_days = len(daily_values) if daily_values else 1
-        annualized_return = return_pct * (252 / trading_days) if trading_days > 0 else 0.0
+        annualized_return = calculate_annualized_return(return_pct / 100, trading_days, periods_per_year=252) * 100
 
         # 计算卡尔玛比率 (年化收益/最大回撤)
         calmar = annualized_return / max_dd if max_dd > 0 else 0.0

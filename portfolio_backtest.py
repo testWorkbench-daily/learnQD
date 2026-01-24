@@ -18,6 +18,7 @@ import time
 import pandas as pd
 import backtrader as bt
 import numpy as np
+from bt_runner import calculate_sharpe_ratio, calculate_annualized_return
 from typing import List, Dict, Type
 from bt_base import StrategyAtom, BaseStrategy
 from bt_runner import Runner
@@ -283,11 +284,8 @@ def backtest_portfolio_from_daily_values(
     final_value = portfolio_values[-1]
     total_return = (final_value / initial_value - 1) * 100
 
-    # 夏普比率（年化）
-    if len(daily_returns) > 1 and daily_returns.std() > 0:
-        sharpe_ratio = daily_returns.mean() / daily_returns.std() * np.sqrt(252)
-    else:
-        sharpe_ratio = 0.0
+    # 夏普比率（年化，使用统一方法）
+    sharpe_ratio = calculate_sharpe_ratio(daily_returns, annualize=True, periods_per_year=252)
 
     # 最大回撤
     cumulative = portfolio_values

@@ -43,6 +43,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict, Tuple
 import datetime
+from bt_runner import calculate_sharpe_ratio, calculate_annualized_return
 
 
 class SignalWeightedPortfolioBacktester:
@@ -408,12 +409,9 @@ class SignalWeightedPortfolioBacktester:
         final_value = daily_values_df.iloc[-1]['portfolio_value']
         total_return_pct = (final_value / self.initial_cash - 1) * 100
 
-        # 夏普比率
+        # 夏普比率（使用统一方法）
         daily_returns = daily_values_df['daily_return'].values
-        if len(daily_returns) > 1 and daily_returns.std() > 0:
-            sharpe_ratio = daily_returns.mean() / daily_returns.std() * np.sqrt(252)
-        else:
-            sharpe_ratio = 0.0
+        sharpe_ratio = calculate_sharpe_ratio(daily_returns, annualize=True, periods_per_year=252)
 
         # 最大回撤
         cumulative = daily_values_df['portfolio_value'].values
